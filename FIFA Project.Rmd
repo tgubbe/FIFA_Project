@@ -1,9 +1,8 @@
 ---
 title: "Discriminant Analysis and Random Forest Using FIFA 19 Data"
 author: "Travis Gubbe"
-date: "September 29, 2022"
-revision: "May 17, 2023"
-output: html_document
+date: "Revised: May 17, 2023"
+output: github_document
 ---
 
 In this project, data from the FIFA 19 video game will used to demonstrate discriminant analysis and random forest. Originally, this project was part of a final project in my last semester of college. My job was clean the data and perform the discriminant analysis and random forest. All other parts of the project have been excluded. The FIFA data contains over 50 variables, as well as over 18,000 entries. 
