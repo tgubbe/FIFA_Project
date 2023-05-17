@@ -1,0 +1,314 @@
+---
+title: "Discriminant Analysis and Random Forest Using FIFA 19 Data"
+author: "Travis Gubbe"
+date: "September 29, 2022"
+revision: "May 17, 2023"
+output: html_document
+---
+
+In this project, data from the FIFA 19 video game will used to demonstrate discriminant analysis and random forest. Originally, this project was part of a final project in my last semester of college. My job was clean the data and perform the discriminant analysis and random forest. All other parts of the project have been excluded. The FIFA data contains over 50 variables, as well as over 18,000 entries. 
+
+The original data set is no longer available. However, a similar data set can be found at:
+
+<https://www.kaggle.com/datasets/chaitanyahivlekar/fifa-19-player-dataset>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(pander)
+library(plyr)
+library(dplyr)
+library(MASS)
+library(stringr)
+library(tree)
+```
+
+## Import the Dataset
+
+The FIFA 19 data is read into R Markdown. In addition, a subset is created to condense the amount of variables. 
+
+```{r data}
+data = read.csv('~/R datasets/fifa_data.csv')
+
+fifa = subset(data, select = c(ID, Name, Age, Nationality, Overall, Potential, Club, Value,
+                                Wage, Preferred.Foot, International.Reputation, Weak.Foot,
+                                Skill.Moves, Position, Contract.Valid.Until, Height, Weight,
+                                Crossing, Finishing, HeadingAccuracy, ShortPassing, Volleys,
+                                Dribbling, Curve, FKAccuracy, LongPassing, BallControl, 
+                                Acceleration, SprintSpeed, Agility, Reactions, Balance, 
+                                ShotPower,Jumping, Stamina, Strength, LongShots, 
+                                Aggression, Interceptions,Positioning, Vision, 
+                                Penalties, Composure, Marking,StandingTackle, 
+                                SlidingTackle, GKDiving, GKHandling, GKKicking,
+                                GKPositioning, GKReflexes, Release.Clause))
+names(fifa)
+```
+
+## Exploring the Data
+
+ First, the data was explored to understand the patterns and relationships of the data. Exploring the data allows us to see what type of analysis can be run. 
+ 
+### Cleaning Data
+
+Before beginning the analysis, the data is inspected for incomplete (NA) values. The column names are also changed to more user-friendly titles. The stringr package is used to remove the letters from integer variables.
+
+```{r clean_data}
+#See if there are any NA values in the dataset
+na_values_count <- colSums(is.na(fifa))
+na_values_count
+#View the classes of the variables
+sapply(fifa, class)
+
+colnames(fifa)[colnames(fifa) == "Wage"] <- "Wage_Thousands"
+colnames(fifa)[colnames(fifa) == "Value"] <- "Value_Millions"
+colnames(fifa)[colnames(fifa) == "Preferred.Foot"] <- "Preferred_Foot"
+colnames(fifa)[colnames(fifa) == "International.Reputation"] <- "International_Reputation"
+colnames(fifa)[colnames(fifa) == "Weak.Foot"] <- "Weak_Foot"
+colnames(fifa)[colnames(fifa) == "Skill.Moves"] <- "Skill_Moves"
+colnames(fifa)[colnames(fifa) == "Contract.Valid.Until"] <- "Contract_Valid_Until"
+colnames(fifa)[colnames(fifa) == "HeadingAccuracy"] <- "Heading_Accuracy"
+colnames(fifa)[colnames(fifa) == "ShortPassing"] <- "Short_Passing"
+colnames(fifa)[colnames(fifa) == "FKAccuracy"] <- "FK_Accuracy"
+colnames(fifa)[colnames(fifa) == "LongPassing"] <- "Long_Passing"
+colnames(fifa)[colnames(fifa) == "BallControl"] <- "Ball_Control"
+colnames(fifa)[colnames(fifa) == "SprintSpeed"] <- "Sprint_Speed"
+colnames(fifa)[colnames(fifa) == "ShotPower"] <- "Shot_Power"
+colnames(fifa)[colnames(fifa) == "LongShots"] <- "Long_Shots"
+colnames(fifa)[colnames(fifa) == "StandingTackle"] <- "Standing_Tackle"
+colnames(fifa)[colnames(fifa) == "SlidingTackle"] <- "Sliding_Tackle"
+colnames(fifa)[colnames(fifa) == "GKDiving"] <- "GK_Diving"
+colnames(fifa)[colnames(fifa) == "GKHandling"] <- "GK_Handling"
+colnames(fifa)[colnames(fifa) == "GKKicking"] <- "GK_Kicking"
+colnames(fifa)[colnames(fifa) == "GKPositioning"] <- "GK_Positioning"
+colnames(fifa)[colnames(fifa) == "GKReflexes"] <- "GK_Reflexes"
+colnames(fifa)[colnames(fifa) == "Release.Clause"] <- "Release_Clause_Millions"
+
+names(fifa)
+#Uses string remove function in stringr to remove the letters from the given variables.
+fifa$Value_Millions = str_remove(fifa$Value_Millions, '[M]')
+fifa$Release_Clause_Millions = str_remove(fifa$Release_Clause_Millions, '[M]')
+fifa$Wage_Thousands = str_remove(fifa$Wage_Thousands, '[K]')
+
+head(fifa)
+```
+
+### View the Bar Plot, Mean, Median, and IQR of Left-Footed and Right-Footed Players
+
+As part of exploratory data analysis, a bar plot is made to show the distribution of players per country. A table was also created to show the mean, median, and IQR between left-footed and right-footed players to see if there was a significant difference between the group of players. 
+
+```{r plots}
+#Barplot to show the amount of players per country
+counts <- table(fifa$Nationality)
+barplot(counts)
+#Subsets for Overall ratings between left-footed and right-footed players
+lefty = subset(fifa$Overall, fifa$Preferred_Foot %in% c("Left"))
+righty = subset(fifa$Overall, fifa$Preferred_Foot %in% c("Right"))
+set.caption("Averages for Left Footed and Right Footed Players")
+data.table = rbind(c(mean(lefty), median(lefty), IQR(lefty)), c(mean(righty), median(righty),
+                                                                   IQR(righty)))
+colnames(data.table) = c("Mean", "Median", "IQR")
+rownames(data.table) = c("Left-Footed", "Right-Footed")
+
+pander(data.table)
+table(fifa$Preferred_Foot)
+
+```
+
+As can be seen from the bar plot, the distribution of players among the countries is not even. This should be taken in consideration when attempting to compare player attributes among countries. 
+
+## Discriminant Analysis
+
+For this part of the project, discriminant analysis was done to see if a player's position can be predicted based on the different skill attributes presented. First, multiple duplicates of the fifa data were created, then grouped positions in different ways to see the effect of discriminant analysis on each grouping. The source used to group these positions is given below:
+
+<https://protips.dickssportinggoods.com/sports-and-activities/soccer/soccer-positions-the-numbers-player-roles-basic-formations>
+
+```{r discriminant_setup}
+#Make multiple copies of the fifa data frame. 
+fifa_group_all <- data.frame(fifa)
+fifa_group_mid <- data.frame(fifa)
+
+#Revalue the fifa_group_all data frame to group all of the midfielders, forwards strikers, wings, defenders, and goalkeepers into their respective positions.
+fifa_group_all$Position <- revalue(fifa_group_all$Position, c("CAM" = "Midfield"))
+fifa_group_all$Position <- revalue(fifa_group_all$Position, c("CDM" = "Midfield"))
+fifa_group_all$Position <- revalue(fifa_group_all$Position, c("CM" = "Midfield"))
+fifa_group_all$Position <- revalue(fifa_group_all$Position, c("LAM" = "Midfield"))
+fifa_group_all$Position <- revalue(fifa_group_all$Position, c("LCM" = "Midfield"))
+fifa_group_all$Position <- revalue(fifa_group_all$Position, c("LDM" = "Midfield"))
+fifa_group_all$Position <- revalue(fifa_group_all$Position, c("LM" = "Midfield"))
+fifa_group_all$Position <- revalue(fifa_group_all$Position, c("RAM" = "Midfield"))
+fifa_group_all$Position <- revalue(fifa_group_all$Position, c("RCM" = "Midfield"))
+fifa_group_all$Position <- revalue(fifa_group_all$Position, c("RDM" = "Midfield"))
+fifa_group_all$Position <- revalue(fifa_group_all$Position, c("RM" = "Midfield"))
+
+fifa_group_all$Position <- revalue(fifa_group_all$Position, c("CF" = "Forward"))
+fifa_group_all$Position <- revalue(fifa_group_all$Position, c("LF" = "Forward"))
+fifa_group_all$Position <- revalue(fifa_group_all$Position, c("RF" = "Forward"))
+
+fifa_group_all$Position <- revalue(fifa_group_all$Position, c("LS" = "Striker"))
+fifa_group_all$Position <- revalue(fifa_group_all$Position, c("RS" = "Striker"))
+fifa_group_all$Position <- revalue(fifa_group_all$Position, c("ST" = "Striker"))
+
+fifa_group_all$Position <- revalue(fifa_group_all$Position, c("CB" = "Defense"))
+fifa_group_all$Position <- revalue(fifa_group_all$Position, c("LB" = "Defense"))
+fifa_group_all$Position <- revalue(fifa_group_all$Position, c("LCB" = "Defense"))
+fifa_group_all$Position <- revalue(fifa_group_all$Position, c("LWB" = "Defense"))
+fifa_group_all$Position <- revalue(fifa_group_all$Position, c("RB" = "Defense"))
+fifa_group_all$Position <- revalue(fifa_group_all$Position, c("RCB" = "Defense"))
+fifa_group_all$Position <- revalue(fifa_group_all$Position, c("RWB" = "Defense"))
+
+fifa_group_all$Position <- revalue(fifa_group_all$Position, c("LW" = "Wing"))
+fifa_group_all$Position <- revalue(fifa_group_all$Position, c("RW" = "Wing"))
+
+fifa_group_all$Position <- revalue(fifa_group_all$Position, c("GK" = "Goalkeeper"))
+#View table to see the new groupings
+table(fifa_group_all$Position)
+#Revalue the fifa_group_mid to group midfielders slightly different and compare to the rest of the data.
+fifa_group_mid$Position <- revalue(fifa_group_mid$Position, c("CAM" = "Attack Mid"))
+fifa_group_mid$Position <- revalue(fifa_group_mid$Position, c("LAM" = "Attack Mid"))
+fifa_group_mid$Position <- revalue(fifa_group_mid$Position, c("RAM" = "Attack Mid"))
+
+fifa_group_mid$Position <- revalue(fifa_group_mid$Position, c("CDM" = "Defense Mid"))
+fifa_group_mid$Position <- revalue(fifa_group_mid$Position, c("LDM" = "Defense Mid"))
+fifa_group_mid$Position <- revalue(fifa_group_mid$Position, c("RDM" = "Defense Mid"))
+
+fifa_group_mid$Position <- revalue(fifa_group_mid$Position, c("CM" = "Midfield"))
+fifa_group_mid$Position <- revalue(fifa_group_mid$Position, c("LM" = "Midfield"))
+fifa_group_mid$Position <- revalue(fifa_group_mid$Position, c("RM" = "Midfield"))
+
+fifa_group_mid$Position <- revalue(fifa_group_mid$Position, c("CF" = "Forward"))
+fifa_group_mid$Position <- revalue(fifa_group_mid$Position, c("LF" = "Forward"))
+fifa_group_mid$Position <- revalue(fifa_group_mid$Position, c("RF" = "Forward"))
+
+fifa_group_mid$Position <- revalue(fifa_group_mid$Position, c("LS" = "Striker"))
+fifa_group_mid$Position <- revalue(fifa_group_mid$Position, c("RS" = "Striker"))
+fifa_group_mid$Position <- revalue(fifa_group_mid$Position, c("ST" = "Striker"))
+
+fifa_group_mid$Position <- revalue(fifa_group_mid$Position, c("CB" = "Defense"))
+fifa_group_mid$Position <- revalue(fifa_group_mid$Position, c("LB" = "Defense"))
+fifa_group_mid$Position <- revalue(fifa_group_mid$Position, c("LCB" = "Defense"))
+fifa_group_mid$Position <- revalue(fifa_group_mid$Position, c("LWB" = "Defense"))
+fifa_group_mid$Position <- revalue(fifa_group_mid$Position, c("RB" = "Defense"))
+fifa_group_mid$Position <- revalue(fifa_group_mid$Position, c("RCB" = "Defense"))
+fifa_group_mid$Position <- revalue(fifa_group_mid$Position, c("RWB" = "Defense"))
+
+fifa_group_mid$Position <- revalue(fifa_group_mid$Position, c("LW" = "Wing"))
+fifa_group_mid$Position <- revalue(fifa_group_mid$Position, c("RW" = "Wing"))
+
+fifa_group_mid$Position <- revalue(fifa_group_mid$Position, c("GK" = "Goalkeeper"))
+#View table to see the new groupings
+table(fifa_group_mid$Position)
+
+```
+
+Now that the data has been grouped, linear discriminant analysis is run on the "all" data set.
+
+
+```{r all_discrim}
+#Linear Discriminant Analysis for the fifa_group_all data frame
+all_lda <- lda(factor(Position) ~ Overall+Crossing+Finishing+Heading_Accuracy+
+                      Short_Passing+Volleys+Dribbling+Curve+FK_Accuracy+Long_Passing
+                    +Ball_Control+Acceleration+Sprint_Speed+Agility+Balance+Shot_Power+
+                      Jumping+Stamina+Long_Shots+Interceptions+Positioning+Vision+Penalties
+                    +Standing_Tackle+Sliding_Tackle, data = fifa_group_all)
+#Prediction of LDA for fifa_group_all
+all_pred_lda <- predict(all_lda, newdata = fifa_group_all)
+#Lists the first 20 errors in the data set
+all_mistakes <- which(all_pred_lda$class != (fifa_group_all$Position))
+head(all_mistakes, 20)
+#Finds the error rate for LDA for fifa_group_all, which is about 15%
+error_all <- length(all_mistakes) / nrow(fifa_group_all)
+error_all
+#Creates a confusion matrix for our LDA to show where the error rate is happening
+table(predict(all_lda)$class, fifa_group_all$Position)
+#Quadratic Discriminant Analysis for the fifa_group_all dataset
+all_qda <- qda(factor(Position) ~ Overall+Crossing+Finishing+Heading_Accuracy+
+                      Short_Passing+Volleys+Dribbling+Curve+FK_Accuracy+Long_Passing
+                    +Ball_Control+Acceleration+Sprint_Speed+Agility+Balance+Shot_Power+
+                      Jumping+Stamina+Long_Shots+Interceptions+Positioning+Vision+Penalties
+                    +Standing_Tackle+Sliding_Tackle, data = fifa_group_all)
+
+#Prediction of QDA for fifa_group_all
+pred_qda <- predict(all_qda, newdata = fifa_group_all)
+#Finds the error rate for QDA for fifa_group_all
+qda_mistakes_all <- which(all_pred_lda$class != (fifa_group_all$Position))
+qda_error_all <- length(qda_mistakes_all) / nrow(fifa_group_all)
+qda_error_all
+```
+
+The program attempts to predict a player's position based on the variables listed in the equation. A confusion matrix is created to show the model's guess compared to the player's actual position. In addition, the error rate is calculated to show how often the model is incorrect. From the error rate, the model is incorrect in guessing the player's position roughly 15.1% of the time. 
+
+Linear discrimination analysis is run on the "mid" data set, which groups more closely on midfielders:
+
+```{r mid_discrim}
+#Linear Discriminant Analysis for the fifa_group_mid data frame
+mid_lda <- lda(factor(Position) ~ Overall+Crossing+Finishing+Heading_Accuracy+
+                      Short_Passing+Volleys+Dribbling+Curve+FK_Accuracy+Long_Passing
+                    +Ball_Control+Acceleration+Sprint_Speed+Agility+Balance+Shot_Power+
+                      Jumping+Stamina+Long_Shots+Interceptions+Positioning+Vision+Penalties
+                    +Standing_Tackle+Sliding_Tackle, data = fifa_group_mid)
+#Prediction of LDA for fifa_group_mid
+mid_pred_lda <- predict(mid_lda, newdata = fifa_group_mid)
+#Counts and lists the first 20 errors in the data set
+mid_mistakes <- which(mid_pred_lda$class != (fifa_group_mid$Position))
+head(mid_mistakes, 20)
+#Finds the error rate for LDA for fifa_group_mid, which is about 27.5%
+error_mid <- length(mid_mistakes) / nrow(fifa_group_mid)
+error_mid
+#Confusion matrix for the prediction of the ODMK LDA
+table(predict(mid_lda)$class, fifa_group_mid$Position)
+```
+
+The error rate for this data frame is roughly 27.6%, which means the model can only correctly predict the player's position just roughly 72% of the time. This is worse than the previous model. From looking at the confusion matrix in the second model, it appears the specifying the midfielder's position even further is a difficult task.
+
+## Random Forest
+
+Random forest is a classifying method consisting of many decision trees. By creating a "forest" of decision trees, the classifying model hopes to select it's best model by running many different decision trees and "takes the majority" to determine classification. To do so, random forest uses out-of-bag sampling. To find the error rate of the random forest, the out-of-bag (OOB) error is used to see the internal error estimate.
+
+First, a random forest is run for the "all" data set:
+
+```{r random_forest_all}
+set.seed(1234)
+library(randomForest)
+fifa_all_rf <- randomForest(factor(Position) ~ Overall+Crossing+Finishing+Heading_Accuracy+
+                      Short_Passing+Volleys+Dribbling+Curve+FK_Accuracy+Long_Passing
+                    +Ball_Control+Acceleration+Sprint_Speed+Agility+Balance+Shot_Power+
+                      Jumping+Stamina+Long_Shots+Interceptions+Positioning+Vision+Penalties
+                    +Standing_Tackle+Sliding_Tackle, ntree = 400, mtry = 7, 
+                    data = fifa_group_all)
+fifa_all_rf
+#IMportance Plot to see the importance of each variable as measured by the Random Forest
+varImpPlot(fifa_all_rf)
+```
+
+From the input printed and the plot provided, it is seen that heading accuracy and sliding tackle are important variables in determining a player's position. It can also be argued sliding tackle and standing tackle are important variables in determining a player's position.
+
+The random forest was able to predict certain positions very well, while others were harder to predict. For example, defense and goalkeepers have a low class error, while forwards and wings have very high class errors.
+
+Next, a random forest is done for the "mid" data set:
+
+```{r random_forest_mid}
+fifa_mid_rf <- randomForest(factor(Position) ~ Overall+Crossing+Finishing+Heading_Accuracy+
+                      Short_Passing+Volleys+Dribbling+Curve+FK_Accuracy+Long_Passing
+                    +Ball_Control+Acceleration+Sprint_Speed+Agility+Balance+Shot_Power+
+                      Jumping+Stamina+Long_Shots+Interceptions+Positioning+Vision+Penalties
+                    +Standing_Tackle+Sliding_Tackle, ntree = 400, mtry = 7, 
+                    data = fifa_group_mid)
+fifa_mid_rf
+
+varImpPlot(fifa_mid_rf)
+```
+
+From the input printed and the plot provided, it is seen that sliding tackle and standing tackle are important variables in determining a player's position. It can also be argued heading accuracy and finishing are important variables in determining a player's position.
+
+Defense and striker have low class errors, but forwards and RCM have very high class errors.
+
+## Conclusion
+
+In this group project, my assignment was to clean and manipulate the data, view the distribution of the data, and perform discriminant analysis and random forest. 
+
+Discriminant analysis was done to attempt to predict a player's position through linear combinations of the variables. Last, random forest was performed to further classify and interpret the data. From random forest, the importance of variables and classification error can be determined.
+
+This project helped me clean and interpret a large data set. This project also allowed me to collaborate with others to determine the best classification methods for the data set. I learned how to approach a large data set, as well as how to communicate with others when it comes to data analysis. 
+
+Thank you for viewing my collaboration.
+
+# END
